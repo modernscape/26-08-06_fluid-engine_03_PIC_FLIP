@@ -1,13 +1,151 @@
 <!doctype html>
-<html lang="en">
+<html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="stylesheet" href="style.css" />
-    <title>26-08-06-fluid-engine-03-pic-flip</title>
+    <title>Spreading Fluid PBD Simulation</title>
+    <style>
+      body {
+        background: #090d16;
+        color: #f8fafc;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        margin: 0;
+        font-family: sans-serif;
+      }
+      canvas {
+        background: #020617;
+        border: 1px solid #1e293b;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+        border-radius: 8px;
+      }
+      h2 {
+        margin-bottom: 10px;
+        font-size: 1.1rem;
+        font-weight: 400;
+        color: #38bdf8;
+      }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
-    <script type="module" src="/main.js"></script>
+    <h2>自然に横へ広がる水たまりシミュレーション</h2>
+    <canvas id="simCanvas" width="600" height="600"></canvas>
+
+    <script>
+      const canvas = document.getElementById("simCanvas")
+      const ctx = canvas.getContext("2d")
+
+      const WIDTH = canvas.width
+      const HEIGHT = canvas.height
+
+      const REST_DIST = 13.0 // 粒子の基準間隔
+      const COLLISION_DIST = 11.0 // 最小距離
+      const GRAVITY = 0.25 // 重力
+
+      class Particle {
+        constructor(x, y) {
+          this.x = x
+          this.y = y
+          this.oldX = x
+          this.oldY = y
+        }
+      }
+
+      // --- 初期配置：少し上からサラッと落とす ---
+      const num = 5
+      let particles = []
+      for (let x = WIDTH * 0.35; x < WIDTH * 0.65; x += num) {
+        for (let y = HEIGHT * 0.05; y < HEIGHT * 0.3; y += num) {
+          particles.push(new Particle(x + (Math.random() - 0.5) * 2, y))
+        }
+      }
+
+      function update() {
+        const n = particles.length
+
+        // 1. 予測位置の更新（流体らしく滑らかに動かす）
+        for (let p of particles) {
+          let vx = (p.x - p.oldX) * 0.99 // 空気抵抗を減らして滑らかに
+          let vy = (p.y - p.oldY) * 0.99 + GRAVITY
+
+          p.oldX = p.x
+          p.oldY = p.y
+
+          p.x += vx
+          p.y += vy
+        }
+
+        // 2. 距離制約（「押し返す力」だけに絞り、引き合う力を無くして自然に広がりやすくする）
+        for (let iter = 0; iter < 4; iter++) {
+          for (let i = 0; i < n; i++) {
+            for (let j = i + 1; j < n; j++) {
+              let p1 = particles[i]
+              let p2 = particles[j]
+
+              let dx = p2.x - p1.x
+              let dy = p2.y - p1.y
+              let dist = Math.sqrt(dx * dx + dy * dy)
+
+              // 近すぎるときだけ押し返す（非圧縮性）
+              if (dist < COLLISION_DIST && dist > 0) {
+                let correction = ((COLLISION_DIST - dist) / dist) * 0.5
+                let offsetX = dx * correction * 0.5
+                let offsetY = dy * correction * 0.5
+
+                p1.x -= offsetX
+                p1.y -= offsetY
+                p2.x += offsetX
+                p2.y += offsetY
+              }
+            }
+          }
+        }
+
+        // 3. 境界条件（床や壁。床ですべすべに横へ流れるようにする）
+        const margin = 12
+        for (let p of particles) {
+          if (p.x < margin) {
+            p.x = margin
+            p.oldX = p.x + (p.x - p.oldX) * -0.3
+          }
+          if (p.x > WIDTH - margin) {
+            p.x = WIDTH - margin
+            p.oldX = p.x + (p.x - p.oldX) * -0.3
+          }
+          if (p.y < margin) {
+            p.y = margin
+            p.oldY = p.y + (p.y - p.oldY) * -0.3
+          }
+          if (p.y > HEIGHT - margin) {
+            p.y = HEIGHT - margin
+            // 床にぶつかっても横方向のスピードを殺さず、左右へサーッと流れるようにする
+            let vx = (p.x - p.oldX) * 0.95
+            p.oldX = p.x - vx
+            p.oldY = p.y + (p.y - p.oldY) * -0.1
+          }
+        }
+      }
+
+      function loop() {
+        update()
+
+        ctx.fillStyle = "#020617"
+        ctx.fillRect(0, 0, WIDTH, HEIGHT)
+
+        // 水らしく繋がって見えるよう、少し大きめの半透明な青円で描画
+        ctx.fillStyle = "rgba(56, 189, 248, 0.65)"
+        for (let p of particles) {
+          ctx.beginPath()
+          ctx.arc(p.x, p.y, 8.0, 0, Math.PI * 2)
+          ctx.fill()
+        }
+
+        requestAnimationFrame(loop)
+      }
+
+      requestAnimationFrame(loop)
+    </script>
   </body>
 </html>
