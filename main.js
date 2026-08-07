@@ -88,6 +88,8 @@ const particleSystem = new THREE.Points(geometry, material)
 scene.add(particleSystem)
 
 // --- PIC/FLIP のコア処理ステップ ---
+// --- PIC/FLIP のコア処理ステップ ---
+// --- PIC/FLIP のコア処理ステップ ---
 function updateSimulation() {
   // 1. グリッドの初期化
   uGrid.fill(0)
@@ -95,21 +97,18 @@ function updateSimulation() {
   pGrid.fill(0)
   dGrid.fill(0)
 
-  // 2. Particle to Grid (P2G): 粒子の速度と質量をグリッドに転写
-  // 線形補間（LERP）を用いて周囲のグリッドセルに速度を分配
   const weightGridU = new Float32Array(uGrid.length)
   const weightGridV = new Float32Array(vGrid.length)
 
+  // 2. Particle to Grid (P2G)
   for (let i = 0; i < NUM_PARTICLES; i++) {
     const x = particlePos[i * 2]
     const y = particlePos[i * 2 + 1]
     const vx = particleVel[i * 2]
     const vy = particleVel[i * 2 + 1]
 
-    // グリッド座標への変換
     const gx = x / CELL_SIZE
     const gy = y / CELL_SIZE
-
     const i0 = Math.floor(gx)
     const j0 = Math.floor(gy)
 
@@ -117,7 +116,6 @@ function updateSimulation() {
       const tx = gx - i0
       const ty = gy - j0
 
-      // 重み配分 (Bilinear)
       // Uグリッドへの転写
       const uIdx = i0 + j0 * (GRID_SIZE + 1)
       uGrid[uIdx] += vx * (1 - tx) * (1 - ty)
@@ -137,7 +135,6 @@ function updateSimulation() {
     }
   }
 
-  // 速度を重みで割る（平均化）
   for (let i = 0; i < uGrid.length; i++) {
     if (weightGridU[i] > 0) uGrid[i] /= weightGridU[i]
   }
@@ -152,44 +149,42 @@ function updateSimulation() {
     }
   }
 
-  // 4. 圧力ソルバー (Poisson Equation / ヤコビ法による非圧縮化)
-  // 水が潰れないように、速度の発散（わき出し）を相殺する圧力を計算
-  const iterations = 15
+  // 4. 圧力ソルバー (ヤコビ法)
+  // ※ 反復回数を少し増やして圧力が伝播しやすくする
+  const iterations = 30
   for (let iter = 0; iter < iterations; iter++) {
     for (let j = 1; j < GRID_SIZE - 1; j++) {
       for (let i = 1; i < GRID_SIZE - 1; i++) {
         const idx = i + j * GRID_SIZE
-        if (dGrid[idx] === 0) continue // 流体がない場所はスキップ
+        if (dGrid[idx] === 0) continue
 
-        // 発散 (Divergence) の計算
-        const div =
-          (uGrid[i + 1 + j * (GRID_SIZE + 1)] -
-            uGrid[i + j * (GRID_SIZE + 1)] +
-            vGrid[i + (j + 1) * GRID_SIZE] -
-            vGrid[i + j * GRID_SIZE]) /
-          CELL_SIZE
+        // 周囲が壁（マージン境界）に接している場合の処理を考慮した発散計算
+        const uL = uGrid[i + j * (GRID_SIZE + 1)]
+        const uR = uGrid[i + 1 + j * (GRID_SIZE + 1)]
+        const vT = uGrid ? vGrid[i + j * GRID_SIZE] : 0 // 簡易表現
+        const vB = vGrid[i + (j + 1) * GRID_SIZE]
 
-        // 圧力を更新して発散を打ち消す
-        const pUpdate = -div * 0.5
+        const div = (uR - uL + vB - vT) / CELL_SIZE
+
+        // 圧力を強めにして押し返す力を上げる（係数調整）
+        const pUpdate = -div * 0.8
         pGrid[idx] += pUpdate
 
-        // 速度場を圧力勾配で補正
-        uGrid[i + j * (GRID_SIZE + 1)] -= pUpdate
-        uGrid[i + 1 + j * (GRID_SIZE + 1)] += pUpdate
-        vGrid[i + j * GRID_SIZE] -= pUpdate
-        vGrid[i + (j + 1) * GRID_SIZE] += pUpdate
+        uGrid[i + j * (GRID_SIZE + 1)] -= pUpdate * 0.5
+        uGrid[i + 1 + j * (GRID_SIZE + 1)] += pUpdate * 0.5
+        vGrid[i + j * GRID_SIZE] -= pUpdate * 0.5
+        vGrid[i + (j + 1) * GRID_SIZE] += pUpdate * 0.5
       }
     }
   }
 
-  // 5. Grid to Particle (G2P) & 粒子位置の更新 (PIC / FLIP ブレンド)
+  // 5. Grid to Particle (G2P) & 粒子位置の更新
   for (let i = 0; i < NUM_PARTICLES; i++) {
     const x = particlePos[i * 2]
     const y = particlePos[i * 2 + 1]
     const oldVx = particleVel[i * 2]
     const oldVy = particleVel[i * 2 + 1]
 
-    // グリッドから新しい速度を補間取得
     const gx = x / CELL_SIZE
     const gy = y / CELL_SIZE
     const i0 = Math.floor(gx)
@@ -199,15 +194,12 @@ function updateSimulation() {
       const tx = gx - i0
       const ty = gy - j0
 
-      // 速度のサンプリング (簡易補間)
       const uIdx = i0 + j0 * (GRID_SIZE + 1)
       const vIdx = i0 + j0 * GRID_SIZE
 
       const newVx = uGrid[uIdx] * (1 - tx) + uGrid[uIdx + 1] * tx
       const newVy = vGrid[vIdx] * (1 - ty) + vGrid[vIdx + GRID_SIZE] * ty
 
-      // FLIPとPICのブレンド
-      // FLIP: 速度の変化分を維持するので、水の波や生き生きとしたうねりが生まれる
       const picVelX = newVx
       const picVelY = newVy
       const flipVelX = oldVx + (newVx - oldVx)
@@ -222,27 +214,29 @@ function updateSimulation() {
     particlePos[i * 2] += particleVel[i * 2] * DT
     particlePos[i * 2 + 1] += particleVel[i * 2 + 1] * DT
 
-    // 壁の衝突処理 (バウンダリ)
-    // const margin_w = 100
-    // const margin_h = 10
-    if (particlePos[i * 2] < margin_w) {
-      particlePos[i * 2] = margin_w
-      particleVel[i * 2] *= -0.5
+    // 壁の衝突処理（マージンの範囲内で確実に跳ね返す）
+    const minX = margin_w
+    const maxX = WORLD_W - margin_w
+    const minY = margin_h
+    const maxY = WORLD_H - margin_h
+
+    if (particlePos[i * 2] < minX) {
+      particlePos[i * 2] = minX
+      particleVel[i * 2] *= -0.2 // 跳ね返り係数を少し抑える
     }
-    if (particlePos[i * 2] > WORLD_W - margin_w) {
-      particlePos[i * 2] = WORLD_W - margin_w
-      particleVel[i * 2] *= -0.5
+    if (particlePos[i * 2] > maxX) {
+      particlePos[i * 2] = maxX
+      particleVel[i * 2] *= -0.2
     }
-    if (particlePos[i * 2 + 1] < margin_h) {
-      particlePos[i * 2 + 1] = margin_h
-      particleVel[i * 2 + 1] *= -0.5
+    if (particlePos[i * 2 + 1] < minY) {
+      particlePos[i * 2 + 1] = minY
+      particleVel[i * 2 + 1] *= -0.2
     }
-    if (particlePos[i * 2 + 1] > WORLD_H - margin_h) {
-      particlePos[i * 2 + 1] = WORLD_H - margin_h
-      particleVel[i * 2 + 1] *= -0.5
+    if (particlePos[i * 2 + 1] > maxY) {
+      particlePos[i * 2 + 1] = maxY
+      particleVel[i * 2 + 1] *= -0.2 // 床でべっとり張り付かないように反発を持たせる
     }
 
-    // 描画バッファへ反映
     renderPositions[i * 3] = particlePos[i * 2]
     renderPositions[i * 3 + 1] = particlePos[i * 2 + 1]
     renderPositions[i * 3 + 2] = 0
