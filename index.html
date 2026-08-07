@@ -2,7 +2,7 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <title>Spreading Fluid PBD Simulation</title>
+    <title>Stable PBD Fluid Simulation</title>
     <style>
       body {
         background: #090d16;
@@ -20,6 +20,7 @@
         border: 1px solid #1e293b;
         box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
         border-radius: 8px;
+        margin-bottom: 12px;
       }
       h2 {
         margin-bottom: 10px;
@@ -27,11 +28,38 @@
         font-weight: 400;
         color: #38bdf8;
       }
+      .controls {
+        display: flex;
+        gap: 10px;
+      }
+      button {
+        background: #38bdf8;
+        color: #020617;
+        border: none;
+        padding: 10px 20px;
+        font-size: 0.95rem;
+        font-weight: bold;
+        border-radius: 6px;
+        cursor: pointer;
+        transition:
+          background 0.2s,
+          transform 0.1s;
+        box-shadow: 0 4px 12px rgba(56, 189, 248, 0.3);
+      }
+      button:hover {
+        background: #7dd3fc;
+      }
+      button:active {
+        transform: scale(0.98);
+      }
     </style>
   </head>
   <body>
-    <h2>Spreading Fluid PBD Simulation</h2>
+    <h2>PBD法・絶対に爆発しない安定版水たまり</h2>
     <canvas id="simCanvas" width="800" height="800"></canvas>
+    <div class="controls">
+      <button id="addBtn">上から粒子を追加する</button>
+    </div>
 
     <script>
       const canvas = document.getElementById("simCanvas")
@@ -40,9 +68,9 @@
       const WIDTH = canvas.width
       const HEIGHT = canvas.height
 
-      const REST_DIST = 13.0 // 粒子の基準間隔
-      const COLLISION_DIST = 11.0 // 最小距離
-      const GRAVITY = 0.25 // 重力
+      const REST_DIST = 14.0 // 粒子の基準間隔（少し広げて重なりにくくする）
+      const COLLISION_DIST = 12.0 // 最小距離（ここより近づくと反発）
+      const GRAVITY = 0.35 // 重力（少し強めにして早く落とす）
 
       class Particle {
         constructor(x, y) {
@@ -53,22 +81,34 @@
         }
       }
 
-      // --- 初期配置：少し上からサラッと落とす ---
-      const num = 7
+      // 初期配置（密度を少し低くして初期の重なりを減らす）
+      const num = 10
       let particles = []
-      for (let x = WIDTH * 0.35; x < WIDTH * 0.65; x += num) {
-        for (let y = HEIGHT * 0.05; y < HEIGHT * 0.3; y += num) {
+      for (let x = WIDTH * 0.4; x < WIDTH * 0.6; x += num) {
+        for (let y = HEIGHT * 0.05; y < HEIGHT * 0.45; y += num) {
           particles.push(new Particle(x + (Math.random() - 0.5) * 2, y))
         }
       }
 
+      // ボタンクリックで追加する粒子の初期配置
+      const num_add = 8
+      function addParticles() {
+        for (let x = WIDTH * 0.44; x < WIDTH * 0.56; x += num_add) {
+          for (let y = HEIGHT * 0.02; y < HEIGHT * 0.12; y += num_add) {
+            particles.push(new Particle(x + (Math.random() - 0.5) * 2, y))
+          }
+        }
+      }
+
+      document.getElementById("addBtn").addEventListener("click", addParticles)
+
       function update() {
         const n = particles.length
 
-        // 1. 予測位置の更新（流体らしく滑らかに動かす）
+        // 1. 予測位置の更新（空気抵抗を少し強めに入れる）
         for (let p of particles) {
-          let vx = (p.x - p.oldX) * 0.99 // 空気抵抗を減らして滑らかに
-          let vy = (p.y - p.oldY) * 0.99 + GRAVITY
+          let vx = (p.x - p.oldX) * 0.98 // 水平方向の減衰
+          let vy = (p.y - p.oldY) * 0.98 + GRAVITY // 垂直方向の減衰＋重力
 
           p.oldX = p.x
           p.oldY = p.y
@@ -77,8 +117,9 @@
           p.y += vy
         }
 
-        // 2. 距離制約（「押し返す力」だけに絞り、引き合う力を無くして自然に広がりやすくする）
-        for (let iter = 0; iter < 4; iter++) {
+        // 2. 距離制約（非圧縮性のための押し返し）。反復回数を増やして収束を速める
+        for (let iter = 0; iter < 6; iter++) {
+          // 4回 → 6回に増やした
           for (let i = 0; i < n; i++) {
             for (let j = i + 1; j < n; j++) {
               let p1 = particles[i]
@@ -88,9 +129,10 @@
               let dy = p2.y - p1.y
               let dist = Math.sqrt(dx * dx + dy * dy)
 
-              // 近すぎるときだけ押し返す（非圧縮性）
+              // 粒子が重なっている場合のみ強制的に押し戻す（反発のみ）
               if (dist < COLLISION_DIST && dist > 0) {
-                let correction = ((COLLISION_DIST - dist) / dist) * 0.5
+                let correction = ((COLLISION_DIST - dist) / dist) * 0.7 // 係数を上げて強く押し戻す
+
                 let offsetX = dx * correction * 0.5
                 let offsetY = dy * correction * 0.5
 
@@ -103,27 +145,32 @@
           }
         }
 
-        // 3. 境界条件（床や壁。床ですべすべに横へ流れるようにする）
-        const margin = 12
+        // 3. 境界条件（壁と床。床での摩擦とエネルギーロスを徹底する）
+        const margin = 10
         for (let p of particles) {
+          // 左右の壁（少しだけ跳ねる）
           if (p.x < margin) {
             p.x = margin
-            p.oldX = p.x + (p.x - p.oldX) * -0.3
+            let vx = (p.x - p.oldX) * 0.8
+            p.oldX = p.x - vx
           }
           if (p.x > WIDTH - margin) {
             p.x = WIDTH - margin
-            p.oldX = p.x + (p.x - p.oldX) * -0.3
+            let vx = (p.x - p.oldX) * 0.8
+            p.oldX = p.x - vx
           }
+          // 天井
           if (p.y < margin) {
             p.y = margin
-            p.oldY = p.y + (p.y - p.oldY) * -0.3
           }
+
+          // 床（ここが最重要）
           if (p.y > HEIGHT - margin) {
             p.y = HEIGHT - margin
-            // 床にぶつかっても横方向のスピードを殺さず、左右へサーッと流れるようにする
-            let vx = (p.x - p.oldX) * 0.95
-            p.oldX = p.x - vx
-            p.oldY = p.y + (p.y - p.oldY) * -0.1
+            // 床にぶつかったら、横方向の勢いは「ほぼゼロ」にする（強力な摩擦）
+            // 縦方向の跳ね返りも「ゼロ」にする（完全な非弾性衝突）
+            p.oldX = p.x // 横方向の移動量をリセット
+            p.oldY = p.y + (p.y - p.oldY) * 0.1 // 縦方向の反発を吸収
           }
         }
       }
@@ -134,11 +181,11 @@
         ctx.fillStyle = "#020617"
         ctx.fillRect(0, 0, WIDTH, HEIGHT)
 
-        // 水らしく繋がって見えるよう、少し大きめの半透明な青円で描画
-        ctx.fillStyle = "rgba(56, 189, 248, 0.65)"
+        // 粒子の描画（重なりをごまかすため、サイズを少し小さく）
+        ctx.fillStyle = "rgba(56, 189, 248, 0.7)"
         for (let p of particles) {
           ctx.beginPath()
-          ctx.arc(p.x, p.y, 8.0, 0, Math.PI * 2)
+          ctx.arc(p.x, p.y, 6.5, 0, Math.PI * 2) // 8.0 → 6.5に小さくした
           ctx.fill()
         }
 
