@@ -31,7 +31,7 @@
   </head>
   <body>
     <h2>自然に横へ広がる水たまりシミュレーション</h2>
-    <canvas id="simCanvas" width="600" height="600"></canvas>
+    <canvas id="simCanvas" width="1000" height="800"></canvas>
 
     <script>
       const canvas = document.getElementById("simCanvas")
@@ -54,7 +54,7 @@
       }
 
       // --- 初期配置：少し上からサラッと落とす ---
-      const num = 5
+      const num = 6
       let particles = []
       for (let x = WIDTH * 0.35; x < WIDTH * 0.65; x += num) {
         for (let y = HEIGHT * 0.05; y < HEIGHT * 0.3; y += num) {
