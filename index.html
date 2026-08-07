@@ -68,7 +68,7 @@
       const WIDTH = canvas.width
       const HEIGHT = canvas.height
 
-      const COLLISION_DIST = 13.0 // 粒子間の基準距離を少し調整
+      const COLLISION_DIST = 11.0 // 粒子間の基準距離を少し調整
       const GRAVITY = 0.35
 
       class Particle {
@@ -82,7 +82,7 @@
       }
 
       // 初期配置（全て青）
-      const num = 10
+      const num = 8
       let particles = []
       for (let x = WIDTH * 0.35; x < WIDTH * 0.65; x += num) {
         for (let y = HEIGHT * 0.05; y < HEIGHT * 0.45; y += num) {
@@ -231,7 +231,7 @@
         for (let p of particles) {
           ctx.beginPath()
           ctx.fillStyle = `rgba(${Math.round(p.color[0])}, ${Math.round(p.color[1])}, ${Math.round(p.color[2])}, ${p.color[3]})`
-          ctx.arc(p.x, p.y, 6.5, 0, Math.PI * 2)
+          ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2)
           ctx.fill()
         }
 
